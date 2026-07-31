@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import math
 import os
 import torch
 
@@ -137,7 +138,8 @@ def attach_onnx_metadata(
             depth_height = getattr(pattern_cfg, "height", depth_height)
             depth_width = getattr(pattern_cfg, "width", depth_width)
 
-        clipping_range = getattr(getattr(depth_cfg, "spawn", None), "clipping_range", None)
+        spawn_cfg = getattr(depth_cfg, "spawn", None)
+        clipping_range = getattr(spawn_cfg, "clipping_range", None)
         camera_min_distance = getattr(depth_cfg, "min_distance", None)
         camera_max_distance = getattr(depth_cfg, "max_distance", None)
         if clipping_range is not None:
@@ -151,6 +153,10 @@ def attach_onnx_metadata(
         depth_params = getattr(depth_term_cfg, "params", {}) or {}
         preprocessing_min = depth_params.get("min_distance", camera_min_distance)
         preprocessing_max = depth_params.get("max_distance", camera_max_distance)
+        preprocessing = depth_params.get(
+            "preprocessing",
+            "clip_then_linear_to_minus0.5_plus0.5",
+        )
         metadata.update(
             {
                 "depth_height": depth_height,
@@ -160,9 +166,36 @@ def attach_onnx_metadata(
                 "depth_camera_clipping_min": camera_min_distance,
                 "depth_camera_clipping_max": camera_max_distance,
                 "depth_data_type": "distance_to_image_plane",
-                "depth_preprocessing": "clip_then_linear_to_minus0.5_plus0.5",
+                "depth_preprocessing": preprocessing,
             }
         )
+
+        focal_length = getattr(spawn_cfg, "focal_length", None)
+        horizontal_aperture = getattr(spawn_cfg, "horizontal_aperture", None)
+        vertical_aperture = getattr(spawn_cfg, "vertical_aperture", None)
+        if (
+            isinstance(focal_length, (int, float))
+            and isinstance(horizontal_aperture, (int, float))
+            and isinstance(vertical_aperture, (int, float))
+            and focal_length > 0.0
+        ):
+            metadata["depth_horizontal_fov_deg"] = math.degrees(
+                2.0 * math.atan(horizontal_aperture / (2.0 * focal_length))
+            )
+            metadata["depth_vertical_fov_deg"] = math.degrees(
+                2.0 * math.atan(vertical_aperture / (2.0 * focal_length))
+            )
+            if isinstance(depth_width, int) and isinstance(depth_height, int):
+                metadata["depth_fx_px"] = (
+                    focal_length * depth_width / horizontal_aperture
+                )
+                metadata["depth_fy_px"] = (
+                    focal_length * depth_height / vertical_aperture
+                )
+                # Isaac Lab's USD camera intrinsic conversion places an
+                # unshifted principal point at width/2, height/2.
+                metadata["depth_cx_px"] = depth_width / 2.0
+                metadata["depth_cy_px"] = depth_height / 2.0
 
     model = onnx.load(onnx_path)
 

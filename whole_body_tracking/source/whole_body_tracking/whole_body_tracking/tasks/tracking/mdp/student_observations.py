@@ -24,6 +24,7 @@ def student_depth_image_flat(
     sensor_cfg,
     min_distance: float = 0.3,
     max_distance: float = 3.0,
+    preprocessing: str = "clip_then_linear_to_minus0.5_plus0.5",
     apply_noise: bool = True,
     depth_offset_range: float = 0.03,
     gaussian_noise_std: float = 0.03,
@@ -31,31 +32,70 @@ def student_depth_image_flat(
     """Return the exact, deployment-facing flattened depth tensor.
 
     The preprocessing contract is deliberately independent of Isaac Lab's
-    version-dependent ``mdp.image(normalize=...)`` behavior:
+    version-dependent ``mdp.image(normalize=...)`` behavior.  Two explicit
+    contracts are supported:
 
-    1. replace non-finite values and clip to the calibrated range;
-    2. optionally add PHP's per-frame depth offset and i.i.d. Gaussian noise;
-    3. map ``[min_distance, max_distance]`` linearly to ``[-0.5, 0.5]``.
+    ``clip_then_linear_to_minus0.5_plus0.5`` (legacy G1/Omni)
+        Replace non-finite values, clip to the calibrated range, optionally
+        add noise, then map the range linearly to ``[-0.5, 0.5]``.
+
+    ``range_mask_then_divide_by_max`` (D455 deployment contract)
+        Keep finite values inside ``[min_distance, max_distance]``; set all
+        other pixels to zero; optionally add noise only to valid pixels and
+        re-apply the validity mask; divide valid metric depth by
+        ``max_distance``.  Invalid pixels remain exactly zero.
     """
     sensor = env.scene[sensor_cfg.name]
     img = sensor.data.output["distance_to_image_plane"].clone()
-    img = torch.nan_to_num(
-        img,
-        nan=max_distance,
-        posinf=max_distance,
-        neginf=min_distance,
-    ).clamp(min_distance, max_distance)
-
-    if apply_noise:
-        offset_shape = (img.shape[0],) + (1,) * (img.ndim - 1)
-        depth_offset = torch.empty(offset_shape, device=img.device, dtype=img.dtype).uniform_(
-            -depth_offset_range, depth_offset_range
+    if max_distance <= min_distance:
+        raise ValueError(
+            f"max_distance ({max_distance}) must be greater than "
+            f"min_distance ({min_distance})"
         )
-        img = img + depth_offset + gaussian_noise_std * torch.randn_like(img)
-        img = img.clamp(min_distance, max_distance)
 
-    img = (img - min_distance) / (max_distance - min_distance) - 0.5
-    return img.flatten(1)
+    if preprocessing == "clip_then_linear_to_minus0.5_plus0.5":
+        img = torch.nan_to_num(
+            img,
+            nan=max_distance,
+            posinf=max_distance,
+            neginf=min_distance,
+        ).clamp(min_distance, max_distance)
+
+        if apply_noise:
+            offset_shape = (img.shape[0],) + (1,) * (img.ndim - 1)
+            depth_offset = torch.empty(
+                offset_shape, device=img.device, dtype=img.dtype
+            ).uniform_(-depth_offset_range, depth_offset_range)
+            img = img + depth_offset + gaussian_noise_std * torch.randn_like(img)
+            img = img.clamp(min_distance, max_distance)
+
+        img = (img - min_distance) / (max_distance - min_distance) - 0.5
+        return img.flatten(1)
+
+    if preprocessing == "range_mask_then_divide_by_max":
+        valid = (
+            torch.isfinite(img)
+            & (img >= min_distance)
+            & (img <= max_distance)
+        )
+        img = torch.where(valid, img, torch.zeros_like(img))
+
+        if apply_noise:
+            offset_shape = (img.shape[0],) + (1,) * (img.ndim - 1)
+            depth_offset = torch.empty(
+                offset_shape, device=img.device, dtype=img.dtype
+            ).uniform_(-depth_offset_range, depth_offset_range)
+            noisy_img = img + depth_offset + gaussian_noise_std * torch.randn_like(img)
+            valid = (
+                valid
+                & (noisy_img >= min_distance)
+                & (noisy_img <= max_distance)
+            )
+            img = torch.where(valid, noisy_img, torch.zeros_like(noisy_img))
+
+        return (img / max_distance).flatten(1)
+
+    raise ValueError(f"Unsupported depth preprocessing contract: {preprocessing!r}")
 
 
 def student_projected_gravity(env: ManagerBasedEnv, asset_cfg) -> torch.Tensor:

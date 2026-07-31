@@ -41,6 +41,12 @@ parser.add_argument(
         "in a live Isaac Sim window."
     ),
 )
+parser.add_argument(
+    "--depth_profile",
+    choices=("d455", "legacy"),
+    default="d455",
+    help="Camera/preprocessing profile used by --depth_view (default: d455).",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 if args_cli.headless:
@@ -69,13 +75,21 @@ import whole_body_tracking.tasks  # noqa: F401
 class _ReferenceDepthViewer:
     """Small live metric-depth window implemented with Isaac Sim's own UI."""
 
-    def __init__(self, height: int, width: int, min_distance: float, max_distance: float):
+    def __init__(
+        self,
+        height: int,
+        width: int,
+        min_distance: float,
+        max_distance: float,
+        invalid_outside_range: bool,
+    ):
         import omni.ui as ui
 
         self.height = int(height)
         self.width = int(width)
         self.min_distance = float(min_distance)
         self.max_distance = float(max_distance)
+        self.invalid_outside_range = bool(invalid_outside_range)
         self.frame = 0
         self.provider = ui.ByteImageProvider()
         self.window = ui.Window("Reference Depth Camera", width=640, height=460, visible=True)
@@ -86,39 +100,58 @@ class _ReferenceDepthViewer:
                     ui.ImageWithProvider(self.provider)
 
     def show(self, depth: torch.Tensor):
-        depth_m = depth[0].detach().squeeze(-1).cpu().numpy()
-        depth_m = np.nan_to_num(
-            depth_m,
-            nan=self.max_distance,
-            posinf=self.max_distance,
-            neginf=self.min_distance,
-        )
-        depth_m = np.clip(depth_m, self.min_distance, self.max_distance)
+        raw_depth_m = depth[0].detach().squeeze(-1).cpu().numpy()
+        if self.invalid_outside_range:
+            valid = (
+                np.isfinite(raw_depth_m)
+                & (raw_depth_m >= self.min_distance)
+                & (raw_depth_m <= self.max_distance)
+            )
+            depth_m = np.where(valid, raw_depth_m, 0.0)
+            gray = np.zeros_like(depth_m, dtype=np.uint8)
+            gray[valid] = np.clip(
+                (self.max_distance - depth_m[valid])
+                / (self.max_distance - self.min_distance)
+                * 255.0,
+                0.0,
+                255.0,
+            ).astype(np.uint8)
+            if np.any(valid):
+                valid_depth = depth_m[valid]
+                stats = (
+                    f"valid min {valid_depth.min():.3f}, "
+                    f"max {valid_depth.max():.3f}, "
+                    f"mean {valid_depth.mean():.3f}, "
+                    f"invalid {(~valid).mean() * 100.0:.1f}%"
+                )
+            else:
+                stats = "no valid pixels"
+        else:
+            depth_m = np.nan_to_num(
+                raw_depth_m,
+                nan=self.max_distance,
+                posinf=self.max_distance,
+                neginf=self.min_distance,
+            )
+            depth_m = np.clip(depth_m, self.min_distance, self.max_distance)
+            gray = np.clip(
+                (self.max_distance - depth_m)
+                / (self.max_distance - self.min_distance)
+                * 255.0,
+                0.0,
+                255.0,
+            ).astype(np.uint8)
+            stats = (
+                f"min {depth_m.min():.3f}, max {depth_m.max():.3f}, "
+                f"mean {depth_m.mean():.3f}"
+            )
         # Use the exact fixed metric range of the student preprocessing.  Near
         # pixels are white and far pixels are black; no per-frame normalization.
-        gray = np.clip(
-            (self.max_distance - depth_m)
-            / (self.max_distance - self.min_distance)
-            * 255.0,
-            0.0,
-            255.0,
-        ).astype(np.uint8)
         rgba = np.dstack((gray, gray, gray, np.full_like(gray, 255)))
         self.provider.set_bytes_data(rgba.flatten().data, [self.width, self.height])
-        self.stats.text = (
-            "Depth [m] — near: white, far: black | "
-            f"min {depth_m.min():.3f}, max {depth_m.max():.3f}, "
-            f"mean {depth_m.mean():.3f}"
-        )
+        self.stats.text = "Policy depth [m] — near: white, far/invalid: black | " + stats
         if self.frame % 100 == 0:
-            print(
-                "[DEPTH] frame={} range=[{:.3f}, {:.3f}] m, mean={:.3f} m".format(
-                    self.frame,
-                    float(depth_m.min()),
-                    float(depth_m.max()),
-                    float(depth_m.mean()),
-                )
-            )
+            print(f"[DEPTH] frame={self.frame} {stats}")
         self.frame += 1
 
     def close(self):
@@ -133,11 +166,18 @@ def main(env_cfg, _agent_cfg):
     if args_cli.depth_view:
         # Use the exact camera class and TiledCamera backend used by Omni
         # student training, without changing the reference-play task itself.
-        from whole_body_tracking.tasks.tracking.config.omni.student_env_cfg import (
-            OmniStudentDepthCameraCfg,
-        )
+        if args_cli.depth_profile == "d455":
+            from whole_body_tracking.tasks.tracking.config.omni.student_env_cfg import (
+                OmniD455StudentDepthCameraCfg,
+            )
 
-        env_cfg.scene.depth_camera = OmniStudentDepthCameraCfg()
+            env_cfg.scene.depth_camera = OmniD455StudentDepthCameraCfg()
+        else:
+            from whole_body_tracking.tasks.tracking.config.omni.student_env_cfg import (
+                OmniStudentDepthCameraCfg,
+            )
+
+            env_cfg.scene.depth_camera = OmniStudentDepthCameraCfg()
 
     env = gym.make(args_cli.task, cfg=env_cfg)
     base_env = env.unwrapped
@@ -184,16 +224,25 @@ def main(env_cfg, _agent_cfg):
                 "--depth_view requested, but the scene did not create a 'depth_camera' sensor."
             )
         depth_sensor.reset()
+        if args_cli.depth_profile == "d455":
+            depth_min_distance = 0.5
+            depth_max_distance = 5.0
+            invalid_outside_range = True
+        else:
+            depth_min_distance = 0.3
+            depth_max_distance = 3.0
+            invalid_outside_range = False
         depth_viewer = _ReferenceDepthViewer(
             height=env_cfg.scene.depth_camera.height,
             width=env_cfg.scene.depth_camera.width,
-            min_distance=0.3,
-            max_distance=3.0,
+            min_distance=depth_min_distance,
+            max_distance=depth_max_distance,
+            invalid_outside_range=invalid_outside_range,
         )
         print(
-            "[INFO] Using the Omni student TiledCamera: "
+            f"[INFO] Using the Omni {args_cli.depth_profile} TiledCamera: "
             f"{env_cfg.scene.depth_camera.height}x{env_cfg.scene.depth_camera.width}, "
-            "policy range [0.3, 3.0] m."
+            f"policy range [{depth_min_distance}, {depth_max_distance}] m."
         )
 
     # A fixed overview makes an incorrect scene/reference transform obvious.
@@ -262,7 +311,7 @@ if __name__ == "__main__":
 
 python scripts/play_reference.py \
     --task=Tracking-Climb-Flat-Omni-v0-PLAY \
-    --motion_file Datasets/omni_dataset/overbox_1m_isaaclab_fps50.npz \
+    --motion_file Datasets/omni_dataset/0729_overbox_1m_2_isaaclab_fps50.npz \
     --depth_view
 
 """

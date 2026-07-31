@@ -221,6 +221,7 @@ python scripts/rsl_rl/play.py --task=Tracking-Flat-G1-Wo-State-Estimation-v0 --n
 
 python scripts/rsl_rl/play.py --task=Tracking-Climb-Flat-Omni-v0 --num_envs=2 --motion_file /root/../workspace/PHP/whole_body_tracking/Datasets/omni_dataset/overbox_1m_isaaclab_fps50.npz --load_run 2026-07-24_02-54-51
 
+python scripts/rsl_rl/play.py --task=Tracking-Climb-Flat-Omni-Wo-State-Estimation-v0 --num_envs=2 --motion_file /root/../workspace/PHP/whole_body_tracking/Datasets/omni_dataset/overbox_1m_isaaclab_fps50.npz --load_run 2026-07-26_04-39-02
 
 
 """

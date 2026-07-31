@@ -91,3 +91,36 @@ class OmniStudentEncoderPPORunnerCfg:
             if "CUDA_VISIBLE_DEVICES" in os.environ
             else ""
         )
+
+
+@configclass
+class OmniD455EncoderPolicyCfg(OmniEncoderPolicyCfg):
+    """Encoder input shape for the 64x36 D455 deployment image."""
+
+    # Do not read ``OmniEncoderPolicyCfg.encoder_config`` from the decorated
+    # class here.  Isaac Lab 2.2 configclass converts mutable dataclass members
+    # to a default_factory and removes the corresponding class attribute.
+    # Keeping an independent literal also prevents accidental mutation of the
+    # legacy 58x87 task.
+    encoder_config: dict = {
+        "input_channels": 1,
+        "input_height": 36,
+        "input_width": 64,
+        "channels": [16, 32, 32],
+        "kernel_sizes": [5, 3, 3],
+        "strides": [2, 2, 1],
+        "paddings": [2, 1, 1],
+        "hidden_sizes": [],
+        "output_size": 32,
+        "activation": "elu",
+        "use_maxpool": False,
+        "global_average_pool": True,
+    }
+
+
+@configclass
+class OmniD455StudentEncoderPPORunnerCfg(OmniStudentEncoderPPORunnerCfg):
+    """Separate run namespace prevents loading an incompatible 58x87 model."""
+
+    experiment_name: str = "omni_d455_student_encoder"
+    policy: OmniD455EncoderPolicyCfg = OmniD455EncoderPolicyCfg()

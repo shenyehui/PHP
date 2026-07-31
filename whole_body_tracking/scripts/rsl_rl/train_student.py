@@ -398,6 +398,18 @@ python scripts/rsl_rl/train_student.py \
   --command_vx 1.0 \
   --command_vy 0.0 \
   --num_envs 1024 \
+  --max_iterations 50000 \
+  --headless
+
+  python scripts/rsl_rl/train_student.py \
+  --task Tracking-Student-Encoder-Climb-Flat-Omni-D455-v0 \
+  --registry_name Datasets/omni_dataset/0729_overbox_1m_2_isaaclab_fps50.npz \
+  --teacher_logdirs logs/rsl_rl/omni_climb_teacher/2026-07-29_02-42-00 \
+  --teacher_mode single \
+  --command_vx 1.0 \
+  --command_vy 0.0 \
+  --num_envs 2048 \
+  --max_iterations 50000 \
   --headless
 
 """

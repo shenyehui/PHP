@@ -15,8 +15,8 @@ Default overbox conversion::
 
 Custom motion conversion::
 
-    python scripts/omni_qpos_to_npz.py --input_file raw.npz \
-        --output_file motion_isaaclab_fps50.npz --output_fps 50 --headless
+    python scripts/omni_qpos_to_npz.py --input_file Datasets/omni_dataset/0729_overbox_1m_2.npz \
+        --output_file Datasets/omni_dataset/0729_overbox_1m_2_isaaclab_fps50.npz --output_fps 50 --headless
 """
 
 from __future__ import annotations

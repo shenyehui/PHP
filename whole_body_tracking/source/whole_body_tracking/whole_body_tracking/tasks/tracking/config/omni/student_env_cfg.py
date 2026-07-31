@@ -32,7 +32,7 @@ from whole_body_tracking.tasks.tracking.tracking_env_cfg import MySceneCfg
 
 @configclass
 class OmniStudentDepthCameraCfg(TiledCameraCfg):
-    """D435 optical frame copied exactly from the Omni camera URDF joint.
+    """Legacy depth profile mounted at the Omni camera URDF joint.
 
     ``d435_joint`` in omni_29dof_ballhand_c_camera.urdf is fixed to
     ``waist_pitch_link`` at xyz=(0.068668, 0.0475, 0.231012) and
@@ -284,6 +284,54 @@ class OmniStudentEnvCfg(OmniTrackingEnvCfg):
                 "end_threshold": 1.0,
                 "schedule_steps": 10000 * 24,
             },
+        )
+
+
+@configclass
+class OmniD455StudentDepthCameraCfg(OmniStudentDepthCameraCfg):
+    """Low-resolution training model of the real Intel RealSense D455.
+
+    The 64x36 render preserves the D455 16:9 image geometry while avoiding the
+    prohibitive cost of rendering the physical 848x480 stream in every
+    parallel environment.  The nominal 86x57 degree field of view is used
+    until robot-specific ROS CameraInfo intrinsics are supplied.
+    """
+
+    spawn = sim_utils.PinholeCameraCfg(
+        focal_length=1.0,
+        horizontal_aperture=2 * math.tan(math.radians(86.0) / 2),
+        vertical_aperture=2 * math.tan(math.radians(57.0) / 2),
+        # Render beyond the policy's 5 m limit so preprocessing can distinguish
+        # out-of-range returns from a valid sample exactly at 5 m.
+        clipping_range=(0.05, 6.0),
+    )
+    height = 36
+    width = 64
+    update_period = 1 / 30
+    depth_clipping_behavior = "none"
+
+
+@configclass
+class OmniD455StudentSceneCfg(OmniStudentSceneCfg):
+    depth_camera: TiledCameraCfg = OmniD455StudentDepthCameraCfg()
+
+
+@configclass
+class OmniD455StudentEnvCfg(OmniStudentEnvCfg):
+    """Omni student task matching the real D455 deployment preprocessing."""
+
+    scene: OmniD455StudentSceneCfg = OmniD455StudentSceneCfg(
+        num_envs=1024, env_spacing=8
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.observations.policy.depth_image.params.update(
+            {
+                "min_distance": 0.5,
+                "max_distance": 5.0,
+                "preprocessing": "range_mask_then_divide_by_max",
+            }
         )
 
 

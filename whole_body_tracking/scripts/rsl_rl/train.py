@@ -214,7 +214,7 @@ python scripts/rsl_rl/train.py \
 python scripts/rsl_rl/train.py \
   --task=Tracking-Climb-Flat-Omni-v0 \
   --seed 42 \
-  --registry_name Datasets/omni_dataset/overbox_1m_isaaclab_fps50.npz \
+  --registry_name Datasets/omni_dataset/0729_overbox_1m_2_isaaclab_fps50.npz \
   --num_envs 4096 \
   --headless \
   --logger tensorboard
@@ -222,7 +222,7 @@ python scripts/rsl_rl/train.py \
 python scripts/rsl_rl/train.py \
   --task=Tracking-Climb-Flat-Omni-Wo-State-Estimation-v0 \
   --seed 42 \
-  --registry_name Datasets/omni_dataset/overbox_1m_isaaclab_fps50.npz \
+  --registry_name Datasets/omni_dataset/0729_overbox_1m_2_isaaclab_fps50.npz \
   --num_envs 4096 \
   --headless \
   --logger tensorboard

@@ -62,3 +62,16 @@ gym.register(
         ),
     },
 )
+
+gym.register(
+    id="Tracking-Student-Encoder-Climb-Flat-Omni-D455-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": student_env_cfg.OmniD455StudentEnvCfg,
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_student_cfg:"
+            "OmniD455StudentEncoderPPORunnerCfg"
+        ),
+    },
+)

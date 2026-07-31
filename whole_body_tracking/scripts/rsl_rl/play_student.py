@@ -142,6 +142,7 @@ class _DepthViewer:
         width: int,
         min_distance: float,
         max_distance: float,
+        preprocessing: str,
         fallback_path: str,
         fallback_interval: int = 5,
         prefer_isaac_ui: bool = True,
@@ -150,6 +151,12 @@ class _DepthViewer:
         self.width = width
         self.min_distance = min_distance
         self.max_distance = max_distance
+        self.preprocessing = preprocessing
+        if preprocessing not in {
+            "clip_then_linear_to_minus0.5_plus0.5",
+            "range_mask_then_divide_by_max",
+        }:
+            raise ValueError(f"Unsupported depth preprocessing: {preprocessing!r}")
         self.window_name = "student policy depth input"
         self.fallback_path = fallback_path
         self.fallback_interval = max(int(fallback_interval), 1)
@@ -238,26 +245,60 @@ class _DepthViewer:
     def show(self, obs: torch.Tensor):
         import numpy as np
 
-        depth_normalized = obs[0, : self.height * self.width].reshape(self.height, self.width)
-        depth_m = (depth_normalized.detach().cpu().numpy() + 0.5) * (
-            self.max_distance - self.min_distance
-        ) + self.min_distance
+        depth_normalized = obs[0, : self.height * self.width].reshape(
+            self.height, self.width
+        )
+        depth_normalized = depth_normalized.detach().cpu().numpy()
+        if self.preprocessing == "range_mask_then_divide_by_max":
+            # Zero is the D455 contract's invalid-pixel sentinel.  Valid values
+            # occupy [min/max, 1], so the mask is unambiguous.
+            valid = depth_normalized > 0.0
+            depth_m = depth_normalized * self.max_distance
+            gray = np.zeros_like(depth_normalized, dtype=np.uint8)
+            gray[valid] = np.clip(
+                (self.max_distance - depth_m[valid])
+                / (self.max_distance - self.min_distance)
+                * 255.0,
+                0,
+                255,
+            ).astype(np.uint8)
+            if np.any(valid):
+                valid_depth = depth_m[valid]
+                stats = (
+                    f"valid min {valid_depth.min():.3f}, "
+                    f"max {valid_depth.max():.3f}, "
+                    f"mean {valid_depth.mean():.3f}, "
+                    f"invalid {(~valid).mean() * 100.0:.1f}%"
+                )
+            else:
+                stats = "no valid depth pixels (invalid 100.0%)"
+        else:
+            valid = np.ones_like(depth_normalized, dtype=bool)
+            depth_m = (depth_normalized + 0.5) * (
+                self.max_distance - self.min_distance
+            ) + self.min_distance
+            gray = np.clip(
+                (self.max_distance - depth_m)
+                / (self.max_distance - self.min_distance)
+                * 255.0,
+                0,
+                255,
+            ).astype(np.uint8)
+            stats = (
+                f"min {depth_m.min():.3f}, max {depth_m.max():.3f}, "
+                f"mean {depth_m.mean():.3f}"
+            )
         # Fixed metric scale: near pixels are bright and far pixels are dark.
         # Fixed scaling (instead of per-frame normalization) preserves actual
         # distance changes and makes a constant/invalid frame immediately clear.
-        gray = np.clip(
-            (self.max_distance - depth_m) / (self.max_distance - self.min_distance) * 255.0,
-            0,
-            255,
-        ).astype(np.uint8)
 
         if self.isaac_ui_provider is not None:
             rgba = np.dstack((gray, gray, gray, np.full_like(gray, 255)))
             self.isaac_ui_provider.set_bytes_data(rgba.flatten().data, [self.width, self.height])
             if self.isaac_ui_stats is not None:
                 self.isaac_ui_stats.text = (
-                    "Policy depth [m] — near: white, far: black | "
-                    f"min {depth_m.min():.3f}, max {depth_m.max():.3f}, mean {depth_m.mean():.3f}"
+                    "Policy depth [m] — near: white, far/invalid: black | "
+                    + stats
                 )
             self.frame += 1
             return
@@ -378,6 +419,13 @@ def main(env_cfg, agent_cfg):
         args_cli.command_vx,
         args_cli.command_vy,
     )
+    depth_params = env_cfg.observations.policy.depth_image.params
+    depth_min_distance = float(depth_params.get("min_distance", 0.3))
+    depth_max_distance = float(depth_params.get("max_distance", 3.0))
+    depth_preprocessing = depth_params.get(
+        "preprocessing",
+        "clip_then_linear_to_minus0.5_plus0.5",
+    )
     env_cfg.events.randomize_camera_rays = None
     if args_cli.camera_backend == "standard":
         if args_cli.num_envs != 1:
@@ -457,8 +505,9 @@ def main(env_cfg, agent_cfg):
         depth_viewer = _DepthViewer(
             depth_height,
             depth_width,
-            0.3,
-            3.0,
+            depth_min_distance,
+            depth_max_distance,
+            depth_preprocessing,
             fallback_path=os.path.join(export_dir, "depth_preview.png"),
             prefer_isaac_ui=not args_cli.headless,
         )

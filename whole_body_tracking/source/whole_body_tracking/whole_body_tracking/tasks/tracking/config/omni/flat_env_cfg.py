@@ -33,7 +33,7 @@ OMNI_BOX_SIZE = (1.0, 1.0, 1.0)
 # The box is shifted 0.5 m along +X (red) and 0.2 m along +Y (green).  Isaac
 # Lab's CuboidCfg position is its geometric centre, hence z=0.5 places the
 # bottom at z=0 and the top at z=1 for this 1 m-high box.
-OMNI_BOX_POS = (0.5, 0.2, 0.5)
+OMNI_BOX_POS = (0.38, 0.2, 0.5)
 OMNI_BOX_ROT = (1.0, 0.0, 0.0, 0.0)
 # Fresh-training teacher settings.  Keep the maximum positive tracking reward
 # unchanged while moving 0.5 of weight from the already over-emphasized wrists
